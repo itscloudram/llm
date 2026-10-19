@@ -340,7 +340,7 @@ Pick by GPU memory first (does the model plus its cache fit?), then by memory ba
 
 ## 9. Repository and files
 
-Everything this guide uses lives in the private GitHub repository [itscloudram/llm](https://github.com/itscloudram/llm), branch `main`, first commit `b3c36d8` (19 October 2026). Grant teammates read access in the repository's settings. The links below only open for people with access.
+Everything this guide uses lives in the private GitHub repository [itscloudram/llm](https://github.com/itscloudram/llm), branch `main`, first commit `81f8567` (19 October 2026). Grant teammates read access in the repository's settings. The links below only open for people with access.
 
 | File | Runs in | What it's for | Guide section |
 | --- | --- | --- | --- |
