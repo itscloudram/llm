@@ -36,7 +36,7 @@ GitHub shows `.html` files as source, so to use the interactive page from the re
 | `scripts/reserve-gpu.sh` | CloudShell | Retries an On-Demand Capacity Reservation until one is **active** |
 | `scripts/verify-llm-host.sh` | Instance (SSM) | Read-only health check of every layer |
 | `scripts/llm-admin.py` | Instance (SSM) | Create, list, revoke and test Bifrost virtual keys; status summary |
-| `apps/qwen-chat/` | Laptop | Local chat UI: streaming, thinking panel, files, timing summary. `npm start` |
+| `apps/qwen-chat/` | Laptop | **Optional** local chat UI to test the endpoint: streaming, thinking panel, files, timing summary. `npm start` (see below) |
 | `docs/GUIDE.md`, `docs/Solution-Guide.docx`, `docs/site/` | | The solution guide as Markdown, Word and an interactive page |
 | `docs/architecture.png` | | Architecture diagram |
 
@@ -75,6 +75,43 @@ GitHub shows `.html` files as source, so to use the interactive page from the re
    curl -s https://<your-domain>/v1/chat/completions -H 'Content-Type: application/json' -H "x-bf-vk: <key>" \
      -d '{"model":"vllm/qwen3.8-27b","messages":[{"role":"user","content":"Hello"}],"max_tokens":2048,"reasoning_effort":"low"}'
    ```
+7. **Optional: chat from your laptop.** Run the Qwen Chat app (next section) to test with a UI instead of curl.
+
+## Optional: test the model from a local chat UI (`apps/qwen-chat`)
+
+**Qwen Chat** is a small chat app that runs on your laptop and talks to your endpoint, so you can try the model without
+writing curl commands. CloudFormation doesn't deploy it, and the endpoint works without it. It's for testing and
+demos, not a production front end.
+
+| What you get | Detail |
+|---|---|
+| Streaming chat | Answers appear word by word; Esc stops a reply |
+| Thinking panel | The model's reasoning in a collapsible panel, with Low / Medium / Extra high levels (`reasoning_effort`) |
+| Files | Text, code, CSV, JSON and PDF are read on your laptop and sent with the message; images are optional |
+| Timing under every answer | Time to first token, thinking time, answer time, tokens and tokens/s, and Bifrost's own latency |
+| Settings | Endpoint URL, virtual key, model, max tokens, temperature, top-p, system prompt, context window |
+
+**Run it.** It needs Node.js 18.17 or newer and installs no packages.
+
+```bash
+cd apps/qwen-chat
+npm start                      # then open http://localhost:5178
+```
+
+The first time, Settings opens on its own:
+
+- **Endpoint URL:** `https://<your-domain>/v1`, the `DomainName` you deployed.
+- **Virtual key:** a key from `llm-admin.py create`, for example `sudo python3 llm-admin.py create my-laptop`.
+- **Model:** `vllm/qwen3.8-27b`.
+
+Then click **Save and test connection**.
+
+**Your key stays on your laptop.**
+- It is saved in `apps/qwen-chat/config.json`, which is git-ignored.
+- The page talks only to a local server on `127.0.0.1`, and that server adds the key to each request. The browser never sees the key.
+- Bifrost's CORS settings don't need changing.
+
+Full details and fixes for common errors: [apps/qwen-chat/README.md](apps/qwen-chat/README.md).
 
 ## Rules for callers
 

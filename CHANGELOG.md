@@ -2,6 +2,8 @@
 
 ## v3: 19 Oct 2026
 
+- **Repo hygiene:** example values replace the PoC domain: `llm.example.com` in the parameter files, an empty default endpoint in Qwen Chat. Set `DomainName` to your own.
+- **README:** new section on the optional Qwen Chat app.
 - **Docs:** the solution guide is now in the repository as an interactive page (`docs/site/`), Markdown (`docs/GUIDE.md`) and Word (`docs/Solution-Guide.docx`). The diagram's IAM label now reads *scoped*, matching the security section.
 - **Template:** added `p5.4xlarge` (1x H100 80 GB, bookable as an EC2 Capacity Block) with an automatic 128 parallel requests.
 - **Template:** new `MtpSpeculativeTokens` parameter, 0 to 3, default 0 (off). It adds vLLM `--speculative-config` with the model's own MTP layer.

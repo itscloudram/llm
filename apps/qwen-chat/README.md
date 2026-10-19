@@ -20,7 +20,7 @@ Open **http://localhost:5178**. The first time, Settings opens on its own:
 
 | Field | Value |
 |---|---|
-| Endpoint URL | `https://llm.example.com/v1` (the full `/v1/chat/completions` URL also works) |
+| Endpoint URL | `https://<your-domain>/v1`, the `DomainName` of your stack (the full `/v1/chat/completions` URL also works) |
 | Virtual key | Your `sk-bf-...` key. Create one on the instance with `sudo python3 llm-admin.py create my-laptop` |
 | Send key as | `x-bf-vk header` (Bifrost's own header). `Authorization: Bearer` also works |
 | Default model | `vllm/qwen3.8-27b` |

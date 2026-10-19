@@ -15,7 +15,7 @@ const PORT = Number(process.env.PORT || 5178);
 const HOST = "127.0.0.1"; // local only - this server holds your key
 
 const DEFAULTS = {
-  baseUrl: "https://llm.example.com/v1",
+  baseUrl: "", // set in Settings, e.g. https://llm.example.com/v1
   apiKey: "",
   model: "vllm/qwen3.8-27b",
   keyHeader: "x-bf-vk", // Bifrost virtual key header; "authorization" sends Bearer instead
