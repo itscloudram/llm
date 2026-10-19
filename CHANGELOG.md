@@ -2,6 +2,7 @@
 
 ## v3: 19 Oct 2026
 
+- **Docs:** the solution guide is now in the repository as an interactive page (`docs/site/`), Markdown (`docs/GUIDE.md`) and Word (`docs/Solution-Guide.docx`). The diagram's IAM label now reads *scoped*, matching the security section.
 - **Template:** added `p5.4xlarge` (1x H100 80 GB, bookable as an EC2 Capacity Block) with an automatic 128 parallel requests.
 - **Template:** new `MtpSpeculativeTokens` parameter, 0 to 3, default 0 (off). It adds vLLM `--speculative-config` with the model's own MTP layer.
 - **Parameters:** new `params-p5.json`.

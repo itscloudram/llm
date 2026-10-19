@@ -10,9 +10,17 @@ us-east-1:
 
 Every step was run and verified on a real g6e.2xlarge in October 2026.
 
-**Full solution guide** (concepts, sizing, step-by-step, troubleshooting, evidence):
-[Self-Hosting Qwen3.8-27B on Amazon EC2 with vLLM and Bifrost: Solution Guide](https://claude.ai/code/artifact/66b87154-1232-436c-be18-9e0c9305d0f7)
-(a Claude Doc, shared separately). This README is the quick start.
+## The solution guide
+
+Concepts, GPU sizing, every setup step, troubleshooting and evidence, in three formats with the same text:
+
+| Format | Where | Best for |
+|---|---|---|
+| **Interactive page** | [`docs/site/index.html`](docs/site/index.html), also hosted privately [here](https://claude.ai/artifact/JmfPaYGYuj8Hgm8hBrgcfA) | Reading and learning: search, reading paths, clickable architecture, GPU memory and cost planners, copy buttons, step tracking |
+| **Markdown** | [`docs/GUIDE.md`](docs/GUIDE.md) | Reading on GitHub, with diagrams |
+| **Word** | [`docs/Solution-Guide.docx`](docs/Solution-Guide.docx) | Printing, sharing by email, offline review |
+
+GitHub shows `.html` files as source, so to use the interactive page from the repo, clone it and open `docs/site/index.html` in a browser (it needs the `docs/architecture.png` next to it, which the clone has). The editable original is a Claude Doc, shared separately.
 
 ![Architecture](docs/architecture.png)
 
@@ -29,6 +37,7 @@ Every step was run and verified on a real g6e.2xlarge in October 2026.
 | `scripts/verify-llm-host.sh` | Instance (SSM) | Read-only health check of every layer |
 | `scripts/llm-admin.py` | Instance (SSM) | Create, list, revoke and test Bifrost virtual keys; status summary |
 | `apps/qwen-chat/` | Laptop | Local chat UI: streaming, thinking panel, files, timing summary. `npm start` |
+| `docs/GUIDE.md`, `docs/Solution-Guide.docx`, `docs/site/` | | The solution guide as Markdown, Word and an interactive page |
 | `docs/architecture.png` | | Architecture diagram |
 
 ## Quick start
