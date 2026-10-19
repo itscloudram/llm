@@ -10,8 +10,9 @@ us-east-1:
 
 Every step was run and verified on a real g6e.2xlarge in October 2026.
 
-**Full solution guide** (concepts, sizing, step-by-step, troubleshooting, evidence): see the Claude Doc
-*"Self-Hosting Qwen3.8-27B on Amazon EC2 with vLLM and Bifrost: Solution Guide"*. This README is the quick start.
+**Full solution guide** (concepts, sizing, step-by-step, troubleshooting, evidence):
+[Self-Hosting Qwen3.8-27B on Amazon EC2 with vLLM and Bifrost: Solution Guide](https://claude.ai/code/artifact/66b87154-1232-436c-be18-9e0c9305d0f7)
+(a Claude Doc, shared separately). This README is the quick start.
 
 ![Architecture](docs/architecture.png)
 
