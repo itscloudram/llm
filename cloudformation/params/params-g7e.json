@@ -1,0 +1,158 @@
+[
+ {
+  "ParameterKey": "ProjectName",
+  "ParameterValue": "freyr-llm-qwen-g7e"
+ },
+ {
+  "ParameterKey": "GpuAvailabilityZone",
+  "ParameterValue": "us-east-1a"
+ },
+ {
+  "ParameterKey": "SecondAvailabilityZone",
+  "ParameterValue": "us-east-1c"
+ },
+ {
+  "ParameterKey": "VpcCidr",
+  "ParameterValue": "172.20.0.0/16"
+ },
+ {
+  "ParameterKey": "PublicSubnetACidr",
+  "ParameterValue": "172.20.0.0/24"
+ },
+ {
+  "ParameterKey": "PublicSubnetBCidr",
+  "ParameterValue": "172.20.1.0/24"
+ },
+ {
+  "ParameterKey": "PrivateSubnetACidr",
+  "ParameterValue": "172.20.10.0/24"
+ },
+ {
+  "ParameterKey": "PrivateSubnetBCidr",
+  "ParameterValue": "172.20.11.0/24"
+ },
+ {
+  "ParameterKey": "AlbIngressCidr",
+  "ParameterValue": "0.0.0.0/0"
+ },
+ {
+  "ParameterKey": "DomainName",
+  "ParameterValue": "llm.example.com"
+ },
+ {
+  "ParameterKey": "HostedZoneId",
+  "ParameterValue": ""
+ },
+ {
+  "ParameterKey": "CertificateArn",
+  "ParameterValue": "REPLACE_arn:aws:acm:us-east-1:<account-id>:certificate/<id>"
+ },
+ {
+  "ParameterKey": "AllowedCallerCidrs",
+  "ParameterValue": ""
+ },
+ {
+  "ParameterKey": "WafRateLimitPer5Min",
+  "ParameterValue": "2000"
+ },
+ {
+  "ParameterKey": "AlbIdleTimeoutSeconds",
+  "ParameterValue": "600"
+ },
+ {
+  "ParameterKey": "EnableAlbAccessLogs",
+  "ParameterValue": "true"
+ },
+ {
+  "ParameterKey": "InstanceType",
+  "ParameterValue": "g7e.2xlarge"
+ },
+ {
+  "ParameterKey": "GpuHostPlacement",
+  "ParameterValue": "private-a"
+ },
+ {
+  "ParameterKey": "AmiIdOverride",
+  "ParameterValue": ""
+ },
+ {
+  "ParameterKey": "RootVolumeSizeGiB",
+  "ParameterValue": "150"
+ },
+ {
+  "ParameterKey": "DataVolumeSizeGiB",
+  "ParameterValue": "150"
+ },
+ {
+  "ParameterKey": "DataVolumeIops",
+  "ParameterValue": "4000"
+ },
+ {
+  "ParameterKey": "DataVolumeThroughput",
+  "ParameterValue": "500"
+ },
+ {
+  "ParameterKey": "ModelRepo",
+  "ParameterValue": "Qwen/Qwen3.8-27B-FP8"
+ },
+ {
+  "ParameterKey": "ModelRevision",
+  "ParameterValue": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a"
+ },
+ {
+  "ParameterKey": "ServedModelName",
+  "ParameterValue": "qwen3.8-27b"
+ },
+ {
+  "ParameterKey": "MaxModelLen",
+  "ParameterValue": "131072"
+ },
+ {
+  "ParameterKey": "GpuMemoryUtilization",
+  "ParameterValue": "0.90"
+ },
+ {
+  "ParameterKey": "KvCacheDtype",
+  "ParameterValue": "auto"
+ },
+ {
+  "ParameterKey": "MaxNumSeqs",
+  "ParameterValue": "0"
+ },
+ {
+  "ParameterKey": "MtpSpeculativeTokens",
+  "ParameterValue": "0"
+ },
+ {
+  "ParameterKey": "ToolCallParser",
+  "ParameterValue": "qwen3_xml"
+ },
+ {
+  "ParameterKey": "VllmImage",
+  "ParameterValue": "vllm/vllm-openai:v0.30.0"
+ },
+ {
+  "ParameterKey": "BifrostImage",
+  "ParameterValue": "maximhq/bifrost:v2.2.1"
+ },
+ {
+  "ParameterKey": "BifrostAdminUser",
+  "ParameterValue": "freyr-admin"
+ },
+ {
+  "ParameterKey": "AllowModelStagingWrite",
+  "ParameterValue": "true"
+ },
+ {
+  "ParameterKey": "AdminPrincipalArn",
+  "ParameterValue": ""
+ },
+ {
+  "ParameterKey": "AlarmEmail",
+  "ParameterValue": ""
+ },
+ {
+  "ParameterKey": "LogRetentionDays",
+  "ParameterValue": "30"
+ }
+]

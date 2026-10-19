@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Qwen Chat</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23E5195A'/%3E%3Ccircle cx='15' cy='15' r='7.5' fill='none' stroke='white' stroke-width='3'/%3E%3Cpath d='M19 19l5.5 5.5' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" id="sidebar" aria-label="Chats">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><circle cx="15" cy="15" r="7.5"/><path d="M19 19l5.5 5.5"/></svg>
+        <span>Qwen Chat</span>
+      </div>
+      <button class="new-chat" id="newChat" type="button">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>
+        New chat
+      </button>
+      <nav class="chat-list" id="chatList"></nav>
+      <div class="sidebar-foot">
+        <button class="ghost" id="themeToggle" type="button" aria-label="Switch colour theme">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 12.5A6 6 0 0 1 7.5 4.5a6 6 0 1 0 8 8z"/></svg>
+          <span id="themeLabel">Dark theme</span>
+        </button>
+        <button class="ghost" id="openSettings" type="button">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6"/></svg>
+          Settings
+        </button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="ghost icon-only" id="toggleSidebar" type="button" aria-label="Show or hide chats">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="2.5"/><path d="M8 4v12"/></svg>
+        </button>
+        <div class="model-pick">
+          <label for="modelSelect" class="sr-only">Model</label>
+          <select id="modelSelect"></select>
+          <span class="conn" id="connDot" title="Connection status"></span>
+        </div>
+        <span class="topbar-spacer"></span>
+      </header>
+
+      <section class="thread" id="thread" aria-live="polite">
+        <div class="empty" id="empty">
+          <h1 class="greeting" id="greeting">What are we working on?</h1>
+          <p class="empty-sub" id="emptySub">Answers come from your self-hosted model on EC2, through the Bifrost gateway.</p>
+          <div class="starters" id="starters">
+            <button type="button" data-prompt="Explain how vLLM's PagedAttention manages GPU memory, with a small example.">Explain PagedAttention</button>
+            <button type="button" data-prompt="Write a Python function that retries an HTTP call with exponential backoff and jitter. Include tests.">Write a retry helper</button>
+            <button type="button" data-prompt="Summarise the attached file in five bullet points, then list open questions.">Summarise a file I attach</button>
+          </div>
+        </div>
+      </section>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <div class="drop-hint" id="dropHint">Drop files to attach</div>
+        <div class="attachments" id="attachments"></div>
+        <textarea id="input" rows="1" placeholder="Message Qwen…" aria-label="Message"></textarea>
+        <div class="composer-row">
+          <button class="ghost icon-only" type="button" id="attachBtn" aria-label="Attach files" title="Attach files (text, code, CSV, JSON, PDF; images if enabled)">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M14.5 9.5l-5.3 5.3a3.2 3.2 0 0 1-4.5-4.5l6-6a2.1 2.1 0 0 1 3 3l-5.9 5.9a1 1 0 0 1-1.4-1.4l5.3-5.3"/></svg>
+          </button>
+          <input type="file" id="fileInput" multiple hidden>
+          <label class="effort" title="How long the model thinks before answering">
+            <span>Thinking</span>
+            <select id="effortSelect">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="xhigh">Extra high</option>
+              <option value="">Model default</option>
+            </select>
+          </label>
+          <label class="toggle" title="Show words as they are generated">
+            <input type="checkbox" id="streamToggle" checked>
+            <span>Stream</span>
+          </label>
+          <span class="token-est" id="tokenEst"></span>
+          <button class="send" type="submit" id="sendBtn" aria-label="Send">
+            <svg class="i-send" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16V4M4.5 9.5L10 4l5.5 5.5"/></svg>
+            <svg class="i-stop" viewBox="0 0 20 20" aria-hidden="true"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5"/></svg>
+          </button>
+        </div>
+      </form>
+      <p class="fineprint">Enter to send, Shift+Enter for a new line, Esc to stop.</p>
+    </main>
+  </div>
+
+  <dialog class="settings" id="settings">
+    <form method="dialog" id="settingsForm">
+      <header>
+        <h2>Settings</h2>
+        <button class="ghost icon-only" value="cancel" aria-label="Close settings">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg>
+        </button>
+      </header>
+      <div class="settings-body">
+      <fieldset>
+        <legend>Connection</legend>
+        <p class="hint">Saved on this laptop in <code id="cfgPath">config.json</code>. The key stays in the local server and is never sent to the browser.</p>
+        <label>Endpoint URL
+          <input type="url" id="cfgUrl" placeholder="https://your-domain/v1" required>
+        </label>
+        <label>Virtual key
+          <input type="password" id="cfgKey" placeholder="sk-bf-…" autocomplete="off">
+          <small id="cfgKeyHint"></small>
+        </label>
+        <div class="two">
+          <label>Send key as
+            <select id="cfgHeader">
+              <option value="x-bf-vk">x-bf-vk header</option>
+              <option value="authorization">Authorization: Bearer</option>
+            </select>
+          </label>
+          <label>Default model
+            <input type="text" id="cfgModel" placeholder="vllm/qwen3.8-27b">
+          </label>
+        </div>
+        <div class="test-row">
+          <button type="button" class="secondary" id="testConn">Save and test connection</button>
+          <span id="testResult" role="status"></span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Answers</legend>
+        <label>System prompt
+          <textarea id="setSystem" rows="3" placeholder="Optional. For example: You are a concise assistant for Freyr engineers."></textarea>
+        </label>
+        <div class="three">
+          <label>Max tokens
+            <input type="number" id="setMaxTokens" min="64" max="131072" step="64">
+            <small>Thinking counts toward this.</small>
+          </label>
+          <label>Temperature
+            <input type="number" id="setTemp" min="0" max="2" step="0.05">
+          </label>
+          <label>Top-p
+            <input type="number" id="setTopP" min="0" max="1" step="0.05">
+          </label>
+        </div>
+        <label>Context window (tokens)
+          <input type="number" id="setContext" min="4096" max="262144" step="1024">
+          <small>Match the stack's MaxModelLen: 65536 on g6e, 131072 on g7e or p5. Used for the token counter.</small>
+        </label>
+        <label class="check"><input type="checkbox" id="setShowThinking"> Keep the thinking panel open while it streams</label>
+        <label class="check"><input type="checkbox" id="setVision"> Send attached images to the model <small>(only if the served model accepts images)</small></label>
+      </fieldset>
+      </div>
+
+      <footer>
+        <button type="button" class="ghost danger" id="clearChats">Delete all chats</button>
+        <span class="topbar-spacer"></span>
+        <button value="cancel" class="secondary">Cancel</button>
+        <button type="submit" value="save" class="primary" id="saveSettings">Save</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

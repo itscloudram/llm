@@ -1,0 +1,1452 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Self-hosted Qwen3.8-27B (FP8) on one Amazon EC2 GPU instance (G6e L40S 48 GB by default, G7e 96 GB optional), served by vLLM, governed by
+  Bifrost, published through an internet-facing ALB with AWS WAF. Network, IAM, S3, Secrets
+  Manager, ACM, logs, alarms and snapshots included. Region: us-east-1.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: {default: "Naming and placement"}
+        Parameters: [ProjectName, GpuAvailabilityZone, SecondAvailabilityZone]
+      - Label: {default: "Network"}
+        Parameters: [VpcCidr, PublicSubnetACidr, PublicSubnetBCidr, PrivateSubnetACidr, PrivateSubnetBCidr, AlbIngressCidr]
+      - Label: {default: "Public endpoint"}
+        Parameters: [DomainName, HostedZoneId, CertificateArn, AllowedCallerCidrs, WafRateLimitPer5Min, AlbIdleTimeoutSeconds, EnableAlbAccessLogs]
+      - Label: {default: "GPU host"}
+        Parameters: [InstanceType, GpuHostPlacement, AmiId, AmiIdOverride, RootVolumeSizeGiB, DataVolumeSizeGiB, DataVolumeIops, DataVolumeThroughput]
+      - Label: {default: "Model and serving"}
+        Parameters: [ModelRepo, ModelRevision, ServedModelName, MaxModelLen, GpuMemoryUtilization, KvCacheDtype, MaxNumSeqs, ToolCallParser, VllmImage, BifrostImage, AllowModelStagingWrite]
+      - Label: {default: "Operations"}
+        Parameters: [AdminPrincipalArn, AlarmEmail, LogRetentionDays, EnableOfficeHours, OfficeHoursStartCron, OfficeHoursStopCron, OfficeHoursTimezone]
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: freyr-llm-qwen
+    AllowedPattern: "^[a-z][a-z0-9-]{2,20}$"
+    Description: Lower-case prefix for resource names (3-21 chars).
+  GpuAvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: us-east-1a
+    Description: AZ that offers the instance type (check with describe-instance-type-offerings). Holds the GPU host and the first public subnet.
+  SecondAvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: us-east-1b
+    Description: A different AZ for the second public subnet (an ALB needs two AZs). Both AZs must offer InstanceType (check with describe-instance-type-offerings).
+  VpcCidr:
+    Type: String
+    Default: 10.20.0.0/16
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"
+  PublicSubnetACidr:
+    Type: String
+    Default: 10.20.0.0/24
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"
+  PublicSubnetBCidr:
+    Type: String
+    Default: 10.20.1.0/24
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"
+  PrivateSubnetACidr:
+    Type: String
+    Default: 10.20.10.0/24
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"
+    Description: Private subnet in GpuAvailabilityZone (us-east-1a).
+  PrivateSubnetBCidr:
+    Type: String
+    Default: 10.20.11.0/24
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"
+    Description: Private subnet in SecondAvailabilityZone (us-east-1b).
+  GpuHostPlacement:
+    Type: String
+    Default: private-b
+    AllowedValues: [private-a, private-b]
+    Description: >-
+      Private subnet for the GPU host. private-a = GpuAvailabilityZone (us-east-1a), private-b =
+      SecondAvailabilityZone (us-east-1b). Put it in the AZ of your capacity reservation. Switch if the first AZ has no GPU capacity; a stack update
+      replaces the instance and it re-pulls the model from S3.
+  AlbIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"
+    Description: Who may reach the ALB on 80/443 at the network layer. Keep 0.0.0.0/0 when WAF does the IP filtering.
+  DomainName:
+    Type: String
+    AllowedPattern: "^([a-z0-9-]+\\.)+[a-z]{2,}$"
+    Description: Public DNS name of the endpoint, e.g. llm.example.com
+  HostedZoneId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^Z[A-Z0-9]{1,31}$"
+    Description: Route 53 public hosted zone ID for DomainName. If set, the stack validates the certificate and creates the alias record. Leave empty if DNS is elsewhere (then CertificateArn is required).
+  CertificateArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:aws:acm:us-east-1:[0-9]{12}:certificate/[0-9a-f-]{36}$"
+    ConstraintDescription: Must be an ACM certificate ARN in us-east-1 (or empty).
+    Description: >-
+      Existing ISSUED ACM certificate for DomainName, in us-east-1 and in THIS account (an ALB can only use
+      certificates from its own account and Region). Use this when DNS is in another account. Leave empty to have
+      the stack create one (requires HostedZoneId).
+  AllowedCallerCidrs:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: Optional WAF allow-list of caller CIDRs (e.g. 203.0.113.10/32,198.51.100.0/24). Empty = no IP allow-list.
+  WafRateLimitPer5Min:
+    Type: Number
+    Default: 2000
+    MinValue: 10
+    Description: Max requests per source IP per 5 minutes before WAF blocks. Tune from load-test data.
+  AlbIdleTimeoutSeconds:
+    Type: Number
+    Default: 600
+    MinValue: 60
+    MaxValue: 4000
+    Description: ALB idle timeout (AWS range 1-4000; default 60 is too short for reasoning models).
+  EnableAlbAccessLogs:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+  InstanceType:
+    Type: String
+    Default: g6e.2xlarge
+    AllowedValues: [g6e.2xlarge, g6e.4xlarge, g7e.2xlarge, g7e.4xlarge, g7e.8xlarge]
+    Description: >-
+      Single-GPU sizes only. g6e = 1x NVIDIA L40S 48 GB (FP8 supported, compute capability 8.9);
+      g7e = 1x RTX PRO 6000 Blackwell 96 GB. On g6e keep MaxModelLen at 65536 or below (only ~7 GB is left
+      for KV cache), or set KvCacheDtype=fp8. On g7e, MaxModelLen 131072 is fine.
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id
+    Description: >-
+      Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 24.04), resolved from AWS's public SSM parameter.
+      CloudFormation re-resolves it on EVERY stack update, and a new AMI replaces the instance - set AmiIdOverride
+      before updating.
+  AmiIdOverride:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^ami-[0-9a-f]{8,17}$"
+    ConstraintDescription: Must be empty or an AMI ID (ami-...).
+    Description: >-
+      Pins the AMI. Leave empty on first launch. Before any stack update, set it to the AmiInUse output so the
+      update does not replace the GPU instance when AWS has published a newer DLAMI.
+  RootVolumeSizeGiB:
+    Type: Number
+    Default: 150
+    MinValue: 100
+    MaxValue: 1000
+    Description: Must be at least the AMI root snapshot size.
+  DataVolumeSizeGiB:
+    Type: Number
+    Default: 150
+    MinValue: 80
+    MaxValue: 2000
+  DataVolumeIops:
+    Type: Number
+    Default: 4000
+    MinValue: 3000
+    MaxValue: 16000
+  DataVolumeThroughput:
+    Type: Number
+    Default: 500
+    MinValue: 125
+    MaxValue: 1000
+    Description: MiB/s. g6e.2xlarge and g7e.2xlarge both have up to 5 Gbps (~600 MiB/s) of EBS bandwidth, so more is wasted on those sizes.
+  ModelRepo:
+    Type: String
+    Default: Qwen/Qwen3.8-27B-FP8
+    AllowedPattern: "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+  ModelRevision:
+    Type: String
+    Default: 017b9c7af6b5689d5dd426a76e0bc077eb5ca20a
+    AllowedPattern: "^[0-9a-f]{40}$"
+    Description: Full 40-character Hugging Face commit hash to pin. Default = Qwen/Qwen3.8-27B-FP8 commit last modified 14 Aug 2026 (checked 5 Oct 2026).
+  ServedModelName:
+    Type: String
+    Default: qwen3.8-27b
+    AllowedPattern: "^[a-z0-9._-]+$"
+  MaxModelLen:
+    Type: Number
+    Default: 65536
+    MinValue: 4096
+    MaxValue: 262144
+    Description: >-
+      Longest prompt + answer per request, in tokens. 65536 fits g6e (48 GB); one full-length request needs
+      ~64 KiB of KV cache per token (~4.3 GB at 65536). Raise to 131072+ only on g7e or with KvCacheDtype=fp8.
+  GpuMemoryUtilization:
+    Type: String
+    Default: "0.90"
+    AllowedPattern: "^0\\.[5-9][0-9]?$"
+  KvCacheDtype:
+    Type: String
+    Default: auto
+    AllowedValues: [auto, fp8]
+    Description: >-
+      vLLM --kv-cache-dtype. auto = model dtype (safest quality). fp8 roughly doubles the tokens that fit in
+      the KV cache - useful on g6e for more parallel sessions or longer context; check answer quality first.
+  MaxNumSeqs:
+    Type: Number
+    Default: 64
+    MinValue: 1
+    MaxValue: 1024
+    Description: >-
+      vLLM --max-num-seqs (max parallel requests). Qwen3.8 hybrid layers need one Mamba cache block per
+      running request; the vLLM default 256 does not fit a 48 GB L40S (g6e: ~165 blocks at 0.90 / 65536),
+      so vLLM refuses to start. 64 is safe on g6e; g7e can use 128-256.
+  ToolCallParser:
+    Type: String
+    Default: qwen3_xml
+    AllowedPattern: "^[a-z0-9_]+$"
+    Description: vLLM --tool-call-parser for Qwen3.8. qwen3_xml is what the vLLM Qwen3.8 recipe uses on NVIDIA Blackwell (RTX 5090); qwen3_coder appears only for Ascend.
+  VllmImage:
+    Type: String
+    Default: vllm/vllm-openai:v0.30.0
+    AllowedPattern: "^vllm/vllm-openai:v[0-9][0-9A-Za-z._-]*$"
+    Description: Pinned vLLM image (no :latest). v0.30.0 = newest release image on Docker Hub on 5 Oct 2026; the Qwen3.8 recipe needs 0.17+.
+  BifrostImage:
+    Type: String
+    Default: maximhq/bifrost:v2.2.1
+    AllowedPattern: "^maximhq/bifrost:v[0-9][0-9A-Za-z._-]*$"
+    Description: Pinned Bifrost image (no :latest). v2.2.1 = newest image on Docker Hub on 5 Oct 2026.
+  AllowModelStagingWrite:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Lets the host upload the first copy of the weights to S3. Set to false after the first successful boot.
+  AdminPrincipalArn:
+    Type: String
+    Default: ""
+    Description: Optional IAM role ARN pattern allowed to read model objects from outside the VPC endpoint (e.g. arn:aws:iam::111122223333:role/Admin*).
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: Optional email for alarm notifications (confirm the SNS subscription email).
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90, 180, 365]
+  EnableOfficeHours:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Stop the instance out of hours with EventBridge Scheduler.
+  OfficeHoursStartCron:
+    Type: String
+    Default: cron(0 9 ? * MON-FRI *)
+  OfficeHoursStopCron:
+    Type: String
+    Default: cron(0 21 ? * MON-FRI *)
+  OfficeHoursTimezone:
+    Type: String
+    Default: Asia/Kolkata
+
+Rules:
+  RegionIsUsEast1:
+    Assertions:
+      - Assert: !Equals [!Ref "AWS::Region", us-east-1]
+        AssertDescription: This template is written for us-east-1.
+  CertificateSource:
+    Assertions:
+      - Assert: !Or
+          - !Not [!Equals [!Ref CertificateArn, ""]]
+          - !Not [!Equals [!Ref HostedZoneId, ""]]
+        AssertDescription: Provide CertificateArn, or HostedZoneId so the stack can create and validate a certificate.
+  DistinctAzs:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref GpuAvailabilityZone, !Ref SecondAvailabilityZone]]
+        AssertDescription: The two Availability Zones must differ.
+
+Mappings:
+  ElbLogAccount:
+    us-east-1: {AccountId: "127311923021"}
+
+Conditions:
+  HostInPrivateB: !Equals [!Ref GpuHostPlacement, private-b]
+  PinAmi: !Not [!Equals [!Ref AmiIdOverride, ""]]
+  HasHostedZone: !Not [!Equals [!Ref HostedZoneId, ""]]
+  CreateCertificate: !Equals [!Ref CertificateArn, ""]
+  HasCallerAllowList: !Not [!Equals [!Join ["", !Ref AllowedCallerCidrs], ""]]
+  HasAdminPrincipal: !Not [!Equals [!Ref AdminPrincipalArn, ""]]
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
+  StagingWrite: !Equals [!Ref AllowModelStagingWrite, "true"]
+  OfficeHours: !Equals [!Ref EnableOfficeHours, "true"]
+
+Resources:
+  # ---------------------------------------------------------------- Network
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-vpc"}]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-igw"}]
+
+  IgwAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetACidr
+      AvailabilityZone: !Ref GpuAvailabilityZone
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-public-a"}]
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetBCidr
+      AvailabilityZone: !Ref SecondAvailabilityZone
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-public-b"}]
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PrivateSubnetACidr
+      AvailabilityZone: !Ref GpuAvailabilityZone
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-private-a"}]
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PrivateSubnetBCidr
+      AvailabilityZone: !Ref SecondAvailabilityZone
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-private-b"}]
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-public-rt"}]
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IgwAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  NatEip:
+    Type: AWS::EC2::EIP
+    DependsOn: IgwAttachment
+    Properties:
+      Domain: vpc
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-nat-eip"}]
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !If [HostInPrivateB, !Ref PublicSubnetB, !Ref PublicSubnetA]   # NAT in the same AZ as the GPU host
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-nat"}]
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-private-rt"}]
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      RouteTableIds: [!Ref PrivateRouteTable]
+
+  # ---------------------------------------------------------------- Security groups
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: LLM public ALB - HTTPS in, Bifrost port out to the VPC
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref AlbIngressCidr, Description: HTTPS from callers}
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: !Ref AlbIngressCidr, Description: HTTP redirect to HTTPS}
+      SecurityGroupEgress:
+        - {IpProtocol: tcp, FromPort: 8080, ToPort: 8080, CidrIp: !Ref VpcCidr, Description: Bifrost targets}
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-alb-sg"}]
+
+  HostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: LLM GPU host - Bifrost port from the ALB only
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 8080, ToPort: 8080, SourceSecurityGroupId: !Ref AlbSecurityGroup, Description: Bifrost from ALB}
+      SecurityGroupEgress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS to AWS APIs and registries}
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: HTTP for Ubuntu package mirrors}
+      Tags: [{Key: Name, Value: !Sub "${ProjectName}-host-sg"}]
+
+  # ---------------------------------------------------------------- S3
+  ModelBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      VersioningConfiguration: {Status: Enabled}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-noncurrent-versions
+            Status: Enabled
+            NoncurrentVersionExpiration: {NoncurrentDays: 90}
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 7}
+
+  ModelBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ModelBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt ModelBucket.Arn, !Sub "${ModelBucket.Arn}/*"]
+            Condition: {Bool: {"aws:SecureTransport": "false"}}
+          - !If
+            - HasAdminPrincipal
+            - Sid: ReadModelsOnlyViaVpcEndpointOrAdmin
+              Effect: Deny
+              Principal: "*"
+              Action: "s3:GetObject"
+              Resource: !Sub "${ModelBucket.Arn}/models/*"
+              Condition:
+                StringNotEquals: {"aws:sourceVpce": !Ref S3GatewayEndpoint}
+                ArnNotLike: {"aws:PrincipalArn": !Ref AdminPrincipalArn}
+            - Sid: ReadModelsOnlyViaVpcEndpoint
+              Effect: Deny
+              Principal: "*"
+              Action: "s3:GetObject"
+              Resource: !Sub "${ModelBucket.Arn}/models/*"
+              Condition:
+                StringNotEquals: {"aws:sourceVpce": !Ref S3GatewayEndpoint}
+
+  AlbLogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-access-logs
+            Status: Enabled
+            ExpirationInDays: 90
+
+  AlbLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AlbLogBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ElbLogDelivery
+            Effect: Allow
+            Principal: {AWS: !Sub ["arn:${AWS::Partition}:iam::${ElbAccount}:root", {ElbAccount: !FindInMap [ElbLogAccount, !Ref "AWS::Region", AccountId]}]}
+            Action: "s3:PutObject"
+            Resource: !Sub "${AlbLogBucket.Arn}/alb/AWSLogs/${AWS::AccountId}/*"
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt AlbLogBucket.Arn, !Sub "${AlbLogBucket.Arn}/*"]
+            Condition: {Bool: {"aws:SecureTransport": "false"}}
+
+  # ---------------------------------------------------------------- Secrets
+  BifrostEncryptionKeySecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: Bifrost BIFROST_ENCRYPTION_KEY. Never change it while the stack exists - Bifrost needs it to read its stored config. Deleted with the stack, together with the data volume it protects.
+      GenerateSecretString:
+        PasswordLength: 48
+        ExcludePunctuation: true
+
+  BifrostSetupTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: One-time BIFROST_SETUP_TOKEN for creating the first dashboard admin.
+      GenerateSecretString:
+        PasswordLength: 32
+        ExcludePunctuation: true
+
+  HfTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: Optional Hugging Face read token. Leave as NONE for public repos, or put-secret-value before first boot.
+      SecretString: NONE
+
+  # ---------------------------------------------------------------- Logs
+  VllmLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/${ProjectName}/vllm"
+      RetentionInDays: !Ref LogRetentionDays
+
+  BifrostLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/${ProjectName}/bifrost"
+      RetentionInDays: !Ref LogRetentionDays
+
+  BootstrapLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/${ProjectName}/bootstrap"
+      RetentionInDays: !Ref LogRetentionDays
+
+  WafLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "aws-waf-logs-${ProjectName}"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ---------------------------------------------------------------- IAM
+  HostRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy"
+      Policies:
+        - PolicyName: models-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt ModelBucket.Arn
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "${ModelBucket.Arn}/models/*"
+        - PolicyName: secrets-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref BifrostEncryptionKeySecret
+                  - !Ref BifrostSetupTokenSecret
+                  - !Ref HfTokenSecret
+        - PolicyName: logs-write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents, logs:DescribeLogStreams]
+                Resource:
+                  - !Sub "${VllmLogGroup.Arn}"
+                  - !Sub "${BifrostLogGroup.Arn}"
+                  - !Sub "${BootstrapLogGroup.Arn}"
+        - PolicyName: signal-stack
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: cloudformation:SignalResource
+                Resource: !Ref "AWS::StackId"
+        - !If
+          - StagingWrite
+          - PolicyName: models-stage-write
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: [s3:PutObject, s3:AbortMultipartUpload]
+                  Resource: !Sub "${ModelBucket.Arn}/models/*"
+          - !Ref "AWS::NoValue"
+
+  HostInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref HostRole]
+
+  # ---------------------------------------------------------------- GPU host
+  HostLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ProjectName}-host"
+      LaunchTemplateData:
+        ImageId: !If [PinAmi, !Ref AmiIdOverride, !Ref AmiId]
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile: {Arn: !GetAtt HostInstanceProfile.Arn}
+        DisableApiTermination: false
+        EbsOptimized: true
+        MetadataOptions:
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+          HttpEndpoint: enabled
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: !Ref RootVolumeSizeGiB
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+          - DeviceName: /dev/sdf
+            Ebs:
+              VolumeSize: !Ref DataVolumeSizeGiB
+              VolumeType: gp3
+              Iops: !Ref DataVolumeIops
+              Throughput: !Ref DataVolumeThroughput
+              Encrypted: true
+              DeleteOnTermination: true
+        TagSpecifications:
+          - ResourceType: instance
+            Tags: [{Key: Name, Value: !Sub "${ProjectName}-gpu"}]
+          - ResourceType: volume
+            Tags:
+              - {Key: Name, Value: !Sub "${ProjectName}-gpu-volume"}
+              - {Key: SnapshotPolicy, Value: !Sub "${ProjectName}-daily"}
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              # Bootstrap: Docker + NVIDIA runtime, data volume, model weights, vLLM + Bifrost, CloudWatch agent.
+              set -euo pipefail
+              exec > >(tee -a /var/log/llm-bootstrap.log) 2>&1
+              export AWS_DEFAULT_REGION=${AWS::Region}
+              IMDS_TOKEN=$(curl -sS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')
+              INSTANCE_ID=$(curl -sS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+              signal() { aws cloudformation signal-resource --stack-name '${AWS::StackName}' --logical-resource-id GpuHost --unique-id "$INSTANCE_ID" --status "$1" || true; }
+              trap 'signal FAILURE' ERR
+
+              # 1. Packages: AWS CLI, Docker, Compose, venv
+              export DEBIAN_FRONTEND=noninteractive
+              APT="apt-get -y -o DPkg::Lock::Timeout=900"
+              $APT update
+              command -v aws >/dev/null || snap install aws-cli --classic
+              command -v docker >/dev/null || $APT install docker.io
+              docker compose version >/dev/null 2>&1 || $APT install docker-compose-v2
+              $APT install python3-venv
+              nvidia-ctk runtime configure --runtime=docker
+              systemctl restart docker
+              nvidia-smi
+
+              # 2. Data volume: the non-root EBS disk. Format only if empty, so a re-attached volume keeps its data.
+              ROOT_DISK=$(lsblk -no PKNAME "$(findmnt -no SOURCE /)")
+              DATA_DISK=""
+              for d in $(lsblk -dno NAME,MODEL | awk '/Amazon Elastic Block Store/ {print $1}'); do
+                if [ "$d" != "$ROOT_DISK" ]; then DATA_DISK=/dev/$d; fi
+              done
+              [ -n "$DATA_DISK" ] || { echo "data volume not found"; false; }
+              blkid "$DATA_DISK" >/dev/null || mkfs -t xfs "$DATA_DISK"
+              mkdir -p /opt/models
+              DATA_UUID=$(blkid -s UUID -o value "$DATA_DISK")
+              grep -q "$DATA_UUID" /etc/fstab || echo "UUID=$DATA_UUID /opt/models xfs defaults,nofail 0 2" >> /etc/fstab
+              mount -a
+              mkdir -p /opt/models/vllm-cache /opt/models/bifrost /opt/llm
+              chown 1000:1000 /opt/models/bifrost
+
+              # 3. Model weights: S3 is the source of truth; stage from Hugging Face only if S3 is empty.
+              MODEL_DIR=/opt/models/${ModelFolder}
+              S3_PREFIX=s3://${ModelBucket}/models/${ModelRepo}/${ModelRevision}/
+              if ! aws s3api head-object --bucket '${ModelBucket}' --key 'models/${ModelRepo}/${ModelRevision}/config.json' >/dev/null 2>&1; then
+                STAGE=/opt/dlami/nvme/stage
+                [ -d /opt/dlami/nvme ] || STAGE=/opt/models/stage
+                python3 -m venv /opt/llm/hfenv
+                /opt/llm/hfenv/bin/pip install -q -U huggingface_hub
+                HF_TOKEN=$(aws secretsmanager get-secret-value --secret-id '${HfTokenSecret}' --query SecretString --output text)
+                if [ "$HF_TOKEN" != "NONE" ]; then export HF_TOKEN; else unset HF_TOKEN; fi
+                export HF_XET_HIGH_PERFORMANCE=1
+                /opt/llm/hfenv/bin/hf download '${ModelRepo}' --revision '${ModelRevision}' --local-dir "$STAGE/${ModelFolder}"
+                aws s3 sync "$STAGE/${ModelFolder}" "$S3_PREFIX" --exclude '.cache/*'
+                rm -rf "$STAGE/${ModelFolder}"
+              fi
+              aws s3 sync "$S3_PREFIX" "$MODEL_DIR"
+
+              # 4. Secrets loader (runs before every stack start; env file lives in tmpfs).
+              cat > /opt/llm/load-secrets.sh <<'EOS'
+              #!/bin/bash
+              set -euo pipefail
+              umask 077
+              mkdir -p /run/llm
+              get() { aws --region ${AWS::Region} secretsmanager get-secret-value --secret-id "$1" --query SecretString --output text; }
+              {
+                echo "BIFROST_ENCRYPTION_KEY=$(get '${BifrostEncryptionKeySecret}')"
+                echo "BIFROST_SETUP_TOKEN=$(get '${BifrostSetupTokenSecret}')"
+              } > /run/llm/bifrost.env
+              EOS
+              chmod 700 /opt/llm/load-secrets.sh
+
+              # 5. Bifrost config (no secrets inside; env. references only). Written once, then owned by Bifrost.
+              if [ ! -f /opt/models/bifrost/config.json ]; then
+              cat > /opt/models/bifrost/config.json <<'EOC'
+              {
+                "$schema": "https://www.getbifrost.ai/schema",
+                "encryption_key": "env.BIFROST_ENCRYPTION_KEY",
+                "client": {
+                  "enforce_auth_on_inference": true,
+                  "disable_content_logging": true,
+                  "allowed_origins": ["https://${DomainName}", "http://localhost:8080"],
+                  "max_request_body_size_mb": 20
+                },
+                "providers": {
+                  "vllm": {
+                    "keys": [{
+                      "name": "gpu-qwen",
+                      "value": "",
+                      "models": ["${ServedModelName}"],
+                      "weight": 1.0,
+                      "vllm_key_config": {"url": "http://vllm:8000", "model_name": "${ServedModelName}"}
+                    }],
+                    "network_config": {"default_request_timeout_in_seconds": ${BifrostRequestTimeout}, "stream_idle_timeout_in_seconds": ${BifrostStreamIdle}, "allow_private_network": true}
+                  }
+                },
+                "config_store": {"enabled": true, "type": "sqlite", "config": {"path": "./config.db"}}
+              }
+              EOC
+              chown 1000:1000 /opt/models/bifrost/config.json
+              fi
+
+              # 6. Compose file: vLLM on a private network, Bifrost on 8080.
+              cat > /opt/llm/docker-compose.yml <<'EOY'
+              networks:
+                llm: {}
+              services:
+                vllm:
+                  image: ${VllmImage}
+                  container_name: vllm
+                  restart: unless-stopped
+                  ipc: host
+                  networks: [llm]
+                  ports: ["127.0.0.1:8000:8000"]
+                  volumes:
+                    - /opt/models:/models:ro
+                    - /opt/models/vllm-cache:/root/.cache/vllm
+                  deploy:
+                    resources:
+                      reservations:
+                        devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+                  command:
+                    - --model=/models/${ModelFolder}
+                    - --served-model-name=${ServedModelName}
+                    - --host=0.0.0.0
+                    - --port=8000
+                    - --max-model-len=${MaxModelLen}
+                    - --gpu-memory-utilization=${GpuMemoryUtilization}
+                    - --kv-cache-dtype=${KvCacheDtype}
+                    - --reasoning-parser=qwen3
+                    - --enable-auto-tool-choice
+                    - --tool-call-parser=${ToolCallParser}
+                    - --max-num-seqs=${MaxNumSeqs}
+                  logging:
+                    driver: awslogs
+                    options: {awslogs-region: ${AWS::Region}, awslogs-group: "${VllmLogGroup}", awslogs-stream: vllm}
+                bifrost:
+                  image: ${BifrostImage}
+                  container_name: bifrost
+                  restart: unless-stopped
+                  networks: [llm]
+                  ports: ["8080:8080"]
+                  volumes: ["/opt/models/bifrost:/app/data"]
+                  env_file: [/run/llm/bifrost.env]
+                  environment: {LOG_STYLE: json, LOG_LEVEL: info}
+                  depends_on: [vllm]
+                  logging:
+                    driver: awslogs
+                    options: {awslogs-region: ${AWS::Region}, awslogs-group: "${BifrostLogGroup}", awslogs-stream: bifrost}
+              EOY
+
+              # 7. systemd unit so the stack returns after every reboot or stop/start.
+              cat > /etc/systemd/system/llm-stack.service <<'EOU'
+              [Unit]
+              Description=vLLM + Bifrost
+              After=docker.service network-online.target
+              Wants=network-online.target
+              Requires=docker.service
+
+              [Service]
+              Type=oneshot
+              RemainAfterExit=yes
+              WorkingDirectory=/opt/llm
+              ExecStartPre=/opt/llm/load-secrets.sh
+              ExecStart=/usr/bin/docker compose up -d
+              ExecStop=/usr/bin/docker compose down
+
+              [Install]
+              WantedBy=multi-user.target
+              EOU
+              systemctl daemon-reload
+              systemctl enable --now llm-stack
+
+              # 8. CloudWatch agent: GPU, memory and disk metrics.
+              curl -sSfo /tmp/amazon-cloudwatch-agent.deb https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+              dpkg -i -E /tmp/amazon-cloudwatch-agent.deb
+              cat > /opt/aws/amazon-cloudwatch-agent/etc/llm.json <<'EOJ'
+              {
+                "metrics": {
+                  "append_dimensions": {"InstanceId": "${!aws:InstanceId}"},
+                  "aggregation_dimensions": [["InstanceId"], ["InstanceId", "path"]],
+                  "metrics_collected": {
+                    "nvidia_gpu": {"measurement": ["utilization_gpu", "memory_used", "memory_total", "temperature_gpu", "power_draw"], "metrics_collection_interval": 60},
+                    "mem": {"measurement": ["mem_used_percent"]},
+                    "disk": {"measurement": ["used_percent"], "resources": ["/", "/opt/models"]}
+                  }
+                },
+                "logs": {
+                  "logs_collected": {"files": {"collect_list": [
+                    {"file_path": "/var/log/llm-bootstrap.log", "log_group_name": "${BootstrapLogGroup}", "log_stream_name": "{instance_id}"}
+                  ]}}
+                }
+              }
+              EOJ
+              /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/llm.json
+
+              # 9. Wait for vLLM (model load + first compile) and Bifrost, then signal CloudFormation.
+              for _ in $(seq 1 180); do
+                if curl -sf http://127.0.0.1:8000/health >/dev/null && curl -sf http://127.0.0.1:8080/health >/dev/null; then
+                  signal SUCCESS
+                  exit 0
+                fi
+                sleep 10
+              done
+              echo "vLLM or Bifrost did not become healthy within 30 minutes"
+              signal FAILURE
+              exit 1
+            - ModelFolder: !Select [1, !Split ["/", !Ref ModelRepo]]
+              BifrostRequestTimeout: "600"
+              BifrostStreamIdle: "300"
+
+  GpuHost:
+    Type: AWS::EC2::Instance
+    DependsOn: [PrivateDefaultRoute, PrivateSubnetARouteAssoc, PrivateSubnetBRouteAssoc, S3GatewayEndpoint, StackCleanup]
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT75M
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref HostLaunchTemplate
+        Version: !GetAtt HostLaunchTemplate.LatestVersionNumber
+      SubnetId: !If [HostInPrivateB, !Ref PrivateSubnetB, !Ref PrivateSubnetA]
+      SecurityGroupIds: [!Ref HostSecurityGroup]
+
+  # ---------------------------------------------------------------- Certificate and load balancer
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: CreateCertificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: [PublicDefaultRoute, AlbLogBucketPolicy, StackCleanup]
+    Properties:
+      Name: !Sub "${ProjectName}-alb"
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+      SecurityGroups: [!Ref AlbSecurityGroup]
+      LoadBalancerAttributes:
+        - {Key: idle_timeout.timeout_seconds, Value: !Ref AlbIdleTimeoutSeconds}
+        - {Key: routing.http.drop_invalid_header_fields.enabled, Value: "true"}
+        - {Key: access_logs.s3.enabled, Value: !Ref EnableAlbAccessLogs}
+        - {Key: access_logs.s3.bucket, Value: !Ref AlbLogBucket}
+        - {Key: access_logs.s3.prefix, Value: alb}
+
+  BifrostTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${ProjectName}-bifrost"
+      VpcId: !Ref Vpc
+      Protocol: HTTP
+      Port: 8080
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 15
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher: {HttpCode: "200"}
+      TargetGroupAttributes:
+        - {Key: deregistration_delay.timeout_seconds, Value: "60"}
+      Targets:
+        - {Id: !Ref GpuHost, Port: 8080}
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTPS
+      Port: 443
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !If [CreateCertificate, !Ref Certificate, !Ref CertificateArn]
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig: {StatusCode: "404", ContentType: text/plain, MessageBody: not found}
+
+  ApiForwardRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 10
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig: {Values: ["/v1/*"]}
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref BifrostTargetGroup
+
+  HttpRedirectListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig: {Protocol: HTTPS, Port: "443", StatusCode: HTTP_301}
+
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasHostedZone
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt LoadBalancer.DNSName
+        HostedZoneId: !GetAtt LoadBalancer.CanonicalHostedZoneID
+        EvaluateTargetHealth: true
+
+  # ---------------------------------------------------------------- WAF
+  CallerIpSet:
+    Type: AWS::WAFv2::IPSet
+    Condition: HasCallerAllowList
+    Properties:
+      Name: !Sub "${ProjectName}-callers"
+      Scope: REGIONAL
+      IPAddressVersion: IPV4
+      Addresses: !Ref AllowedCallerCidrs
+
+  WebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub "${ProjectName}-waf"
+      Scope: REGIONAL
+      DefaultAction: {Allow: {}}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "${ProjectName}-waf"
+      Rules:
+        - !If
+          - HasCallerAllowList
+          - Name: block-unknown-ips
+            Priority: 0
+            Action: {Block: {}}
+            Statement:
+              NotStatement:
+                Statement:
+                  IPSetReferenceStatement: {Arn: !GetAtt CallerIpSet.Arn}
+            VisibilityConfig: {SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: block-unknown-ips}
+          - !Ref "AWS::NoValue"
+        - Name: rate-per-ip
+          Priority: 1
+          Action: {Block: {}}
+          Statement:
+            RateBasedStatement:
+              Limit: !Ref WafRateLimitPer5Min
+              EvaluationWindowSec: 300
+              AggregateKeyType: IP
+          VisibilityConfig: {SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: rate-per-ip}
+        - Name: ip-reputation
+          Priority: 2
+          OverrideAction: {None: {}}
+          Statement:
+            ManagedRuleGroupStatement: {VendorName: AWS, Name: AWSManagedRulesAmazonIpReputationList}
+          VisibilityConfig: {SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: ip-reputation}
+        - Name: known-bad-inputs
+          Priority: 3
+          OverrideAction: {None: {}}
+          Statement:
+            ManagedRuleGroupStatement: {VendorName: AWS, Name: AWSManagedRulesKnownBadInputsRuleSet}
+          VisibilityConfig: {SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: known-bad-inputs}
+        - Name: core-rule-set
+          Priority: 4
+          OverrideAction: {None: {}}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              RuleActionOverrides:
+                # LLM prompts routinely exceed 8 KB and contain code, paths and URLs.
+                - {Name: SizeRestrictions_BODY, ActionToUse: {Count: {}}}
+                - {Name: CrossSiteScripting_BODY, ActionToUse: {Count: {}}}
+                - {Name: GenericLFI_BODY, ActionToUse: {Count: {}}}
+                - {Name: GenericRFI_BODY, ActionToUse: {Count: {}}}
+          VisibilityConfig: {SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: core-rule-set}
+
+  WebAclAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !Ref LoadBalancer
+      WebACLArn: !GetAtt WebAcl.Arn
+
+  WebAclLogging:
+    Type: AWS::WAFv2::LoggingConfiguration
+    Properties:
+      ResourceArn: !GetAtt WebAcl.Arn
+      LogDestinationConfigs:
+        - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${WafLogGroup}"
+
+  # ---------------------------------------------------------------- Alarms
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-alarms"
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  TargetUnhealthyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-target-unhealthy"
+      AlarmDescription: Bifrost /health failing behind the ALB - endpoint down.
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions:
+        - {Name: LoadBalancer, Value: !GetAtt LoadBalancer.LoadBalancerFullName}
+        - {Name: TargetGroup, Value: !GetAtt BifrostTargetGroup.TargetGroupFullName}
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  Target5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-target-5xx"
+      AlarmDescription: vLLM or Bifrost returning 5xx.
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions:
+        - {Name: LoadBalancer, Value: !GetAtt LoadBalancer.LoadBalancerFullName}
+        - {Name: TargetGroup, Value: !GetAtt BifrostTargetGroup.TargetGroupFullName}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  Elb502Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-alb-502"
+      AlarmDescription: >-
+        ALB-generated 502s. Usually the target closed a kept-alive connection the ALB tried to reuse
+        (target keep-alive shorter than the ALB idle timeout). If this fires, lower AlbIdleTimeoutSeconds.
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_ELB_502_Count
+      Dimensions:
+        - {Name: LoadBalancer, Value: !GetAtt LoadBalancer.LoadBalancerFullName}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  HostStatusAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-host-status"
+      AlarmDescription: EC2 status check failed on the GPU host.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions: [{Name: InstanceId, Value: !Ref GpuHost}]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions: [!Ref AlarmTopic]
+
+  GpuSaturatedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-gpu-saturated"
+      AlarmDescription: GPU above 90% for 15 minutes - capacity decision needed. (GPU memory is not alarmed - vLLM pre-allocates it.)
+      Namespace: CWAgent
+      MetricName: nvidia_smi_utilization_gpu
+      Dimensions: [{Name: InstanceId, Value: !Ref GpuHost}]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 90
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  ModelDiskAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-model-disk"
+      AlarmDescription: Data volume (/opt/models) above 85% used.
+      Namespace: CWAgent
+      MetricName: disk_used_percent
+      Dimensions:
+        - {Name: InstanceId, Value: !Ref GpuHost}
+        - {Name: path, Value: /opt/models}
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # ---------------------------------------------------------------- Snapshots
+  DlmRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: dlm.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole"
+
+  SnapshotPolicy:
+    Type: AWS::DLM::LifecyclePolicy
+    DependsOn: StackCleanup
+    Properties:
+      Description: !Sub "${ProjectName} daily EBS snapshots keep 7"
+      State: ENABLED
+      ExecutionRoleArn: !GetAtt DlmRole.Arn
+      PolicyDetails:
+        PolicyType: EBS_SNAPSHOT_MANAGEMENT
+        ResourceTypes: [VOLUME]
+        TargetTags: [{Key: SnapshotPolicy, Value: !Sub "${ProjectName}-daily"}]
+        Schedules:
+          - Name: daily
+            CopyTags: true
+            CreateRule: {Interval: 24, IntervalUnit: HOURS, Times: ["20:30"]}
+            RetainRule: {Count: 7}
+
+  # ---------------------------------------------------------------- Clean delete
+  # CloudFormation cannot delete non-empty buckets. On stack delete (or a failed-create rollback) this
+  # empties both buckets (all versions) and removes the EBS snapshots made by the snapshot policy.
+  # The GPU host, ALB and snapshot policy depend on it, so they are gone before it runs.
+  # It always reports SUCCESS, so it can never block a create or delete.
+  StackCleanupLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-stack-cleanup"
+      RetentionInDays: 7
+
+  StackCleanupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: stack-cleanup
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt StackCleanupLogGroup.Arn
+              - Effect: Allow
+                Action: [s3:ListBucket, s3:ListBucketVersions]
+                Resource: [!GetAtt ModelBucket.Arn, !GetAtt AlbLogBucket.Arn]
+              - Effect: Allow
+                Action: [s3:DeleteObject, s3:DeleteObjectVersion]
+                Resource: [!Sub "${ModelBucket.Arn}/*", !Sub "${AlbLogBucket.Arn}/*"]
+              - Effect: Allow
+                Action: ec2:DescribeSnapshots
+                Resource: "*"
+              - Effect: Allow
+                Action: ec2:DeleteSnapshot
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}::snapshot/*"
+                Condition:
+                  StringEquals: {"aws:ResourceTag/SnapshotPolicy": !Sub "${ProjectName}-daily"}
+
+  StackCleanupFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: StackCleanupLogGroup
+    Properties:
+      FunctionName: !Sub "${ProjectName}-stack-cleanup"
+      Description: Empties the stack's S3 buckets and deletes its DLM snapshots on stack delete.
+      Runtime: python3.13
+      Handler: index.handler
+      Timeout: 900
+      MemorySize: 256
+      Role: !GetAtt StackCleanupRole.Arn
+      Code:
+        ZipFile: |
+          import time
+          import boto3
+          import cfnresponse
+
+          s3 = boto3.client("s3")
+          ec2 = boto3.client("ec2")
+
+
+          def empty(bucket):
+              """Delete every object version and delete marker. Returns how many were removed."""
+              removed = 0
+              for page in s3.get_paginator("list_object_versions").paginate(Bucket=bucket):
+                  keys = [{"Key": o["Key"], "VersionId": o["VersionId"]}
+                          for o in page.get("Versions", []) + page.get("DeleteMarkers", [])]
+                  for i in range(0, len(keys), 1000):
+                      s3.delete_objects(Bucket=bucket, Delete={"Objects": keys[i:i + 1000], "Quiet": True})
+                  removed += len(keys)
+              return removed
+
+
+          def drain(bucket, deadline):
+              """Empty until two passes 60 s apart find nothing (late ALB log files can still arrive)."""
+              quiet = 0
+              while quiet < 2 and time.time() < deadline:
+                  try:
+                      n = empty(bucket)
+                  except s3.exceptions.NoSuchBucket:
+                      return
+                  print(f"{bucket}: removed {n} objects/versions")
+                  quiet = quiet + 1 if n == 0 else 0
+                  if quiet < 2:
+                      time.sleep(60)
+
+
+          def handler(event, context):
+              try:
+                  if event["RequestType"] == "Delete":
+                      p = event["ResourceProperties"]
+                      deadline = time.time() + context.get_remaining_time_in_millis() / 1000 - 90
+                      for bucket in (p["ModelBucket"], p["LogBucket"]):
+                          try:
+                              drain(bucket, deadline)
+                          except Exception as e:  # keep going; report, never block
+                              print(f"could not empty {bucket}: {e}")
+                      snaps = ec2.describe_snapshots(
+                          OwnerIds=["self"],
+                          Filters=[{"Name": "tag:SnapshotPolicy", "Values": [p["SnapshotTag"]]}])["Snapshots"]
+                      for snap in snaps:
+                          try:
+                              ec2.delete_snapshot(SnapshotId=snap["SnapshotId"])
+                              print("deleted", snap["SnapshotId"])
+                          except Exception as e:
+                              print(f"could not delete {snap['SnapshotId']}: {e}")
+              except Exception as e:
+                  print("cleanup error (stack operation continues):", e)
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, "stack-cleanup")
+
+  StackCleanup:
+    Type: Custom::StackCleanup
+    Properties:
+      ServiceToken: !GetAtt StackCleanupFunction.Arn
+      ModelBucket: !Ref ModelBucket
+      LogBucket: !Ref AlbLogBucket
+      SnapshotTag: !Sub "${ProjectName}-daily"
+
+  # ---------------------------------------------------------------- Optional office-hours schedule
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Condition: OfficeHours
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: scheduler.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition: {StringEquals: {"aws:SourceAccount": !Ref "AWS::AccountId"}}
+      Policies:
+        - PolicyName: start-stop-gpu-host
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ec2:StartInstances, ec2:StopInstances]
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${GpuHost}"
+
+  StartSchedule:
+    Type: AWS::Scheduler::Schedule
+    Condition: OfficeHours
+    Properties:
+      Name: !Sub "${ProjectName}-start"
+      ScheduleExpression: !Ref OfficeHoursStartCron
+      ScheduleExpressionTimezone: !Ref OfficeHoursTimezone
+      FlexibleTimeWindow: {Mode: "OFF"}
+      Target:
+        Arn: arn:aws:scheduler:::aws-sdk:ec2:startInstances
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: !Sub '{"InstanceIds": ["${GpuHost}"]}'
+
+  StopSchedule:
+    Type: AWS::Scheduler::Schedule
+    Condition: OfficeHours
+    Properties:
+      Name: !Sub "${ProjectName}-stop"
+      ScheduleExpression: !Ref OfficeHoursStopCron
+      ScheduleExpressionTimezone: !Ref OfficeHoursTimezone
+      FlexibleTimeWindow: {Mode: "OFF"}
+      Target:
+        Arn: arn:aws:scheduler:::aws-sdk:ec2:stopInstances
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: !Sub '{"InstanceIds": ["${GpuHost}"]}'
+
+Outputs:
+  EndpointBaseUrl:
+    Description: OpenAI-compatible base URL for agents (send a Bifrost virtual key as the API key).
+    Value: !Sub "https://${DomainName}/v1"
+  RequestModelName:
+    Description: Model name agents put in requests.
+    Value: !Sub "vllm/${ServedModelName}"
+  LoadBalancerDnsName:
+    Description: Point DomainName here with a CNAME if DNS is not in Route 53.
+    Value: !GetAtt LoadBalancer.DNSName
+  LoadBalancerHostedZoneId:
+    Description: Alias-target hosted zone ID of the ALB (for an alias A record in another account's Route 53).
+    Value: !GetAtt LoadBalancer.CanonicalHostedZoneID
+  DnsRecordToCreate:
+    Description: Record to create in the Route 53 account (CNAME for a subdomain; for an alias A record use the dualstack. name with LoadBalancerHostedZoneId).
+    Value: !Sub
+      - "CNAME ${DomainName} -> ${Dns}   |   or Alias A ${DomainName} -> dualstack.${Dns} (zone ${Zone})"
+      - {Dns: !GetAtt LoadBalancer.DNSName, Zone: !GetAtt LoadBalancer.CanonicalHostedZoneID}
+  GpuHostInstanceId:
+    Value: !Ref GpuHost
+  AmiInUse:
+    Description: AMI the GPU host was launched from. Put this in AmiIdOverride before any stack update.
+    Value: !If [PinAmi, !Ref AmiIdOverride, !Ref AmiId]
+  GpuHostSubnet:
+    Description: Private subnet (and AZ) the GPU host runs in. It has no public IP.
+    Value: !If
+      - HostInPrivateB
+      - !Sub "${PrivateSubnetB} (${SecondAvailabilityZone})"
+      - !Sub "${PrivateSubnetA} (${GpuAvailabilityZone})"
+  PrivateSubnetIds:
+    Value: !Join [",", [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]
+  PublicSubnetIds:
+    Value: !Join [",", [!Ref PublicSubnetA, !Ref PublicSubnetB]]
+  ModelBucketName:
+    Value: !Ref ModelBucket
+  ModelS3Prefix:
+    Value: !Sub "s3://${ModelBucket}/models/${ModelRepo}/${ModelRevision}/"
+  ShellCommand:
+    Description: Open a shell on the host (Session Manager plugin required).
+    Value: !Sub "aws ssm start-session --region ${AWS::Region} --target ${GpuHost}"
+  DashboardTunnelCommand:
+    Description: Open the Bifrost dashboard at http://localhost:8080 through Session Manager.
+    Value: !Sub "aws ssm start-session --region ${AWS::Region} --target ${GpuHost} --document-name AWS-StartPortForwardingSession --parameters portNumber=8080,localPortNumber=8080"
+  SetupTokenSecretArn:
+    Description: BIFROST_SETUP_TOKEN for creating the first dashboard admin.
+    Value: !Ref BifrostSetupTokenSecret
+  WebAclArn:
+    Value: !GetAtt WebAcl.Arn

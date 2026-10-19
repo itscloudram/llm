@@ -1,0 +1,5 @@
+node_modules/
+**/config.json
+!cloudformation/**
+*.log
+.DS_Store

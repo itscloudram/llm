@@ -1,0 +1,12 @@
+{
+  "name": "qwen-chat",
+  "version": "1.0.0",
+  "description": "Local chat UI for the self-hosted Qwen3.8 endpoint behind Bifrost (streaming, thinking, files, latency).",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": { "node": ">=18.17" },
+  "scripts": {
+    "start": "node server.js"
+  }
+}

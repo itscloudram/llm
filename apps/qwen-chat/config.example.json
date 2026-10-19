@@ -1,0 +1,6 @@
+{
+  "baseUrl": "https://llm.example.com/v1",
+  "apiKey": "sk-bf-PASTE-YOUR-VIRTUAL-KEY",
+  "model": "vllm/qwen3.8-27b",
+  "keyHeader": "x-bf-vk"
+}
