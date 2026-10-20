@@ -1,5 +1,35 @@
 # Changelog
 
+## Guide v4: 20 Oct 2026
+
+- **New in section 2:** LLM parameters and core concepts:
+  - what "27B" means and where the parameters are;
+  - how a transformer writes a token;
+  - the architecture in numbers, and parameters to gigabytes;
+  - how a model is trained;
+  - dense versus mixture-of-experts;
+  - a full table of request parameters with Qwen's values;
+  - turning thinking off;
+  - hallucination;
+  - prompting, RAG, fine-tuning and agents.
+- **New chapters 18 to 25:**
+  - GPU and instance primer;
+  - observability and benchmarking;
+  - scaling, availability and recovery;
+  - cost engineering;
+  - model lifecycle;
+  - security for LLM applications (OWASP Top 10 for LLM apps);
+  - API request reference;
+  - template reference: all 44 parameters, 20 outputs and 64 resources, generated from the YAML.
+- **Glossary** grown to 57 terms; new sources added.
+- **Word file** rebuilt as a navigable document. It has:
+  - a cover, quick navigation and a contents page;
+  - "at a glance" boxes and colour-coded callouts;
+  - 14 charts and diagrams;
+  - tick boxes and clickable cross-references;
+  - a quick-reference card.
+- **Interactive page:** all 27 chapters, plus a sampling playground and cost per million tokens in the calculator.
+
 ## v3: 19 Oct 2026
 
 - **Repo hygiene:** example values replace the PoC domain: `llm.example.com` in the parameter files, an empty default endpoint in Qwen Chat. Set `DomainName` to your own.
