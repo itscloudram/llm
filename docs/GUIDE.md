@@ -1577,7 +1577,7 @@ Every external fact in this guide comes from one of these pages, opened between 
 - [Red Hat AI Inference Server announcement](https://www.businesswire.com/news/home/20250520450429/en)
 - [NVIDIA Dynamo feature matrix](https://docs.nvidia.com/dynamo/v1.2.0/resources/feature-matrix)
 
-**Added in version 4 (concepts, operations and security)**
+**Concepts, operations and security**
 
 - [vLLM metrics](https://docs.vllm.ai/en/latest/usage/metrics.html), [vllm bench serve](https://docs.vllm.ai/en/latest/cli/bench/serve.html), [LoRA adapters](https://docs.vllm.ai/en/latest/features/lora.html), [structured outputs](https://docs.vllm.ai/en/latest/features/structured_outputs.html), [engine arguments](https://docs.vllm.ai/en/latest/configuration/engine_args.html)
 - [Bifrost multi-node deployment](https://docs.getbifrost.ai/deployment-guides/how-to/multinode), [Bifrost telemetry](https://docs.getbifrost.ai/features/telemetry)
