@@ -19,12 +19,13 @@ Every step was run and verified on a real g6e.2xlarge in October 2026.
 - **Grow and go deeper:** GPU primer, monitoring and benchmarking, scaling and recovery, cost per token, model lifecycle, LLM security (OWASP), the API reference and a full reference of the template's parameters, outputs and resources.
 - **Reference:** a glossary and every source.
 
-The same text comes in three formats:
+The same text comes in four formats:
 
 | Format | Where | Best for |
 |---|---|---|
 | **Interactive page** | [`docs/site/index.html`](docs/site/index.html), also hosted privately [here](https://claude.ai/artifact/JmfPaYGYuj8Hgm8hBrgcfA) | Learning: search, reading paths, clickable architecture, GPU memory planner, speed and cost calculator, sampling playground, step tracking |
 | **Word** | [`docs/Solution-Guide.docx`](docs/Solution-Guide.docx) | Reading offline, printing, sharing. Clickable contents and cross-references, an "at a glance" box per chapter, evidence/check/tip callouts, 14 charts and diagrams, tick boxes, a quick-reference card |
+| **PDF** | [`docs/Solution-Guide.pdf`](docs/Solution-Guide.pdf) | Reading on any device and printing. GitHub previews it in the browser. Same pages as the Word file, with clickable contents, bookmarks and cross-references |
 | **Markdown** | [`docs/GUIDE.md`](docs/GUIDE.md) | Reading on GitHub, with diagrams |
 
 GitHub shows `.html` files as source, so to use the interactive page from the repo, clone it and open `docs/site/index.html` in a browser (it needs the `docs/architecture.png` next to it, which the clone has). The editable original is a Claude Doc, shared separately.
@@ -44,7 +45,7 @@ GitHub shows `.html` files as source, so to use the interactive page from the re
 | `scripts/verify-llm-host.sh` | Instance (SSM) | Read-only health check of every layer |
 | `scripts/llm-admin.py` | Instance (SSM) | Create, list, revoke and test Bifrost virtual keys; status summary |
 | `apps/qwen-chat/` | Laptop | **Optional** local chat UI to test the endpoint: streaming, thinking panel, files, timing summary. `npm start` (see below) |
-| `docs/GUIDE.md`, `docs/Solution-Guide.docx`, `docs/site/` | | The solution guide (v4, 27 chapters) as Markdown, Word and an interactive page |
+| `docs/GUIDE.md`, `docs/Solution-Guide.docx`, `docs/Solution-Guide.pdf`, `docs/site/` | | The solution guide (27 chapters) as Markdown, Word, PDF and an interactive page |
 | `docs/architecture.png` | | Architecture diagram |
 
 ## Quick start
