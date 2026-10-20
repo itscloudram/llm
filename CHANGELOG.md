@@ -1,5 +1,11 @@
 # Changelog
 
+## 20 Oct 2026: neutral names
+
+- **Template defaults:** `ProjectName` is now `llm-qwen` and `BifrostAdminUser` is now `llm-admin`. The parameter files and `reserve-gpu.sh` tags follow.
+- **Docs and chat app:** company names removed.
+- **Existing stacks:** a stack created earlier keeps its old names. To update it without replacing the GPU instance, keep its current `ProjectName` and `BifrostAdminUser` values in your parameter file.
+
 ## Guide v4: 20 Oct 2026
 
 - **New in section 2:** LLM parameters and core concepts:

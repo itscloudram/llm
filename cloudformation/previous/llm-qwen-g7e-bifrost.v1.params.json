@@ -1,7 +1,7 @@
 [
  {
   "ParameterKey": "ProjectName",
-  "ParameterValue": "freyr-llm-qwen"
+  "ParameterValue": "llm-qwen"
  },
  {
   "ParameterKey": "GpuAvailabilityZone",

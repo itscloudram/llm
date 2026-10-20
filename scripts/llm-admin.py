@@ -27,7 +27,7 @@ CONFIG = "/opt/models/bifrost/config.json"
 
 @functools.lru_cache(maxsize=1)
 def admin_auth():
-    user, pw = "freyr-admin", ""
+    user, pw = "llm-admin", ""
     try:
         with open(CONFIG) as f:
             cfg = json.load(f)

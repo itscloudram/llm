@@ -60,7 +60,7 @@ GitHub shows `.html` files as source, so to use the interactive page from the re
    - `ProjectName`, unique per stack.
 3. **Create the stack (CloudShell).** The template is about 62 KB, over the 51,200-byte inline limit, so stage it in S3:
    ```bash
-   STACK=freyr-llm-qwen-stack          # one name per stack, e.g. freyr-llm-qwen-p5
+   STACK=llm-qwen-stack          # one name per stack, e.g. llm-qwen-p5
    BUCKET=cfn-templates-$(aws sts get-caller-identity --query Account --output text)-us-east-1
    aws s3api head-bucket --bucket $BUCKET 2>/dev/null || aws s3 mb s3://$BUCKET --region us-east-1
    aws s3 cp cloudformation/llm-qwen-gpu-bifrost.yaml s3://$BUCKET/llm-qwen-gpu-bifrost.yaml

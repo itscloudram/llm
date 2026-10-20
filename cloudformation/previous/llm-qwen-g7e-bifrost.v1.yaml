@@ -23,7 +23,7 @@ Metadata:
 Parameters:
   ProjectName:
     Type: String
-    Default: freyr-llm-qwen
+    Default: llm-qwen
     AllowedPattern: "^[a-z][a-z0-9-]{2,20}$"
     Description: Lower-case prefix for resource names (3-21 chars).
   GpuAvailabilityZone:

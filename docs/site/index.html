@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&display=swap">
 <style>/* Layout: sticky top bar; contents rail on the left; one reading column with wide figures, tables and tools.
-   Ink-and-plum neutrals with Freyr magenta as the only accent; NVIDIA-green / AWS-orange appear only inside the diagram. */
+   Ink-and-plum neutrals with magenta as the only accent; NVIDIA-green / AWS-orange appear only inside the diagram. */
 :root{
   --bg:#f7f6f9; --surface:#ffffff; --sunk:#f0eef4; --ink:#1b1922; --ink-2:#4a4554; --muted:#6c6677;
   --line:#e4e0ea; --line-2:#d3cddb; --accent:#c8104f; --accent-ink:#ffffff; --accent-soft:#fbe7ee;
@@ -386,10 +386,10 @@ li.flash,tr.flash,p.flash{animation:flash 1.8s ease-out}
 <span>Your ticks, path and theme are saved in this browser only.</span></div></nav>
 <main id="doc"><div class="col">
 <header class="hero">
-<div class="eyebrow"><span>Freyr AI infrastructure</span><span>Solution guide v3</span><span>us-east-1</span></div>
+<div class="eyebrow"><span>AI infrastructure</span><span>Solution guide v3</span><span>us-east-1</span></div>
 <h1>Self-hosting <em>Qwen3.8-27B</em> on Amazon EC2</h1>
 <p class="lede">vLLM serves the model, Bifrost guards it, and one CloudFormation template builds everything. Every step here was run and verified on a real GPU instance in October 2026, with the evidence to show for it.</p>
-<div class="meta"><span>Updated 19 October 2026</span><span>Ram, Freyr</span><span>Version 4</span><span>27 sections</span><span>About 94 minutes to read in full</span></div>
+<div class="meta"><span>Updated 19 October 2026</span><span>Ram</span><span>Version 4</span><span>27 sections</span><span>About 94 minutes to read in full</span></div>
 <div class="actions"><a class="btn primary" href="#s1">Start reading</a><a class="btn" href="#arch">Explore the architecture</a><a class="btn" href="#memCalc">GPU planner</a>
 <a class="btn" href="https://github.com/itscloudram/llm/blob/main/docs/Solution-Guide.docx" target="_blank" rel="noopener">Word version</a><a class="btn" href="https://github.com/itscloudram/llm/blob/main/docs/GUIDE.md" target="_blank" rel="noopener">Markdown on GitHub</a></div>
 <div class="stats">
@@ -1801,7 +1801,7 @@ li.flash,tr.flash,p.flash{animation:flash 1.8s ease-out}
 <li><strong><code>AmiIdOverride</code></strong> empty: uses the latest Deep Learning AMI on the first launch. Pin it before any update (section 14).</li>
 </ul>
 <h3 id="s11-step-3-create-the-stack">Step 3: Create the stack<a aria-label="Link to this part" class="anchor" href="#s11-step-3-create-the-stack">#</a><button aria-pressed="false" class="done-btn" data-key="h11-2" type="button"><svg aria-hidden="true" viewbox="0 0 20 20"><path d="M4 10.5l4 4 8-9"></path></svg><span>Done</span></button></h3>
-<div class="code"><div class="code-h"><span class="lang">Shell</span><span class="spacer"></span><button class="copy" type="button"><svg aria-hidden="true" viewbox="0 0 20 20"><rect height="9.5" rx="2" width="9.5" x="7" y="7"></rect><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v6.5A1.5 1.5 0 0 0 5.5 13H7"></path></svg><span>Copy</span></button></div><pre><code class="language-bash">STACK=freyr-llm-qwen-stack        # one name per stack, e.g. freyr-llm-qwen-p5 for a second one
+<div class="code"><div class="code-h"><span class="lang">Shell</span><span class="spacer"></span><button class="copy" type="button"><svg aria-hidden="true" viewbox="0 0 20 20"><rect height="9.5" rx="2" width="9.5" x="7" y="7"></rect><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v6.5A1.5 1.5 0 0 0 5.5 13H7"></path></svg><span>Copy</span></button></div><pre><code class="language-bash">STACK=llm-qwen-stack        # one name per stack, e.g. llm-qwen-p5 for a second one
 # The template is about 62 KB, over the 51,200-byte limit for --template-body, so stage it in S3 first.
 BUCKET=cfn-templates-$(aws sts get-caller-identity --query Account --output text)-us-east-1
 aws s3api head-bucket --bucket $BUCKET 2&gt;/dev/null || aws s3 mb s3://$BUCKET --region us-east-1
@@ -2294,7 +2294,7 @@ curl -s localhost:8000/metrics | grep -E 'spec_decode_num_(accepted|draft)_token
 <div class="tools"><button class="fold" type="button" aria-label="Show or hide this section"><svg viewBox="0 0 20 20"><path d="M5 7.5l5 5 5-5"/></svg></button></div>
 <div class="sec-meta"><span class="tag">1 min read</span><span class="tag path path-on" hidden>On your path</span></div></div>
 <div class="sec-b"><p>Cancel the capacity reservation, delete the stack, then remove the DNS record. The stack deletes cleanly with no manual emptying.</p>
-<div class="code"><div class="code-h"><span class="lang">Shell</span><span class="spacer"></span><button class="copy" type="button"><svg aria-hidden="true" viewbox="0 0 20 20"><rect height="9.5" rx="2" width="9.5" x="7" y="7"></rect><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v6.5A1.5 1.5 0 0 0 5.5 13H7"></path></svg><span>Copy</span></button></div><pre><code class="language-bash">STACK=freyr-llm-qwen-stack
+<div class="code"><div class="code-h"><span class="lang">Shell</span><span class="spacer"></span><button class="copy" type="button"><svg aria-hidden="true" viewbox="0 0 20 20"><rect height="9.5" rx="2" width="9.5" x="7" y="7"></rect><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v6.5A1.5 1.5 0 0 0 5.5 13H7"></path></svg><span>Copy</span></button></div><pre><code class="language-bash">STACK=llm-qwen-stack
 aws ec2 describe-capacity-reservations --region us-east-1 --filters Name=state,Values=active \
   --query 'CapacityReservations[].[CapacityReservationId,InstanceType,AvailabilityZone]' --output table
 aws ec2 cancel-capacity-reservation --region us-east-1 --capacity-reservation-id &lt;cr-...&gt;
@@ -3228,7 +3228,7 @@ print(r.choices[0].message.content)   # {"number": "INV-77", "vendor": "Acme", .
 <tbody>
 <tr>
 <td><code>ProjectName</code></td>
-<td><code>freyr-llm-qwen</code></td>
+<td><code>llm-qwen</code></td>
 <td></td>
 <td>Prefix for every resource name, log group and alarm. Unique per stack in the account</td>
 <td>Yes</td>
@@ -3529,7 +3529,7 @@ print(r.choices[0].message.content)   # {"number": "INV-77", "vendor": "Acme", .
 </tr>
 <tr>
 <td><code>BifrostAdminUser</code></td>
-<td><code>freyr-admin</code></td>
+<td><code>llm-admin</code></td>
 <td></td>
 <td>Bifrost dashboard and admin API user name; the password is generated</td>
 <td>Yes</td>

@@ -1,6 +1,6 @@
 # Self-Hosting Qwen3.8-27B on Amazon EC2 with vLLM and Bifrost: Solution Guide
 
-Last updated 19 October 2026 · Version 4 · Author: Ram (Freyr) · **[Interactive version](https://claude.ai/artifact/JmfPaYGYuj8Hgm8hBrgcfA)** (or open [`docs/site/index.html`](site/index.html) from a clone) · **[Word version](Solution-Guide.docx)**
+Last updated 19 October 2026 · Version 4 · Author: Ram · **[Interactive version](https://claude.ai/artifact/JmfPaYGYuj8Hgm8hBrgcfA)** (or open [`docs/site/index.html`](site/index.html) from a clone) · **[Word version](Solution-Guide.docx)**
 
 **Contents**
 
@@ -614,7 +614,7 @@ The defaults that matter, and why they stay on the first launch:
 ### Step 3: Create the stack
 
 ```bash
-STACK=freyr-llm-qwen-stack        # one name per stack, e.g. freyr-llm-qwen-p5 for a second one
+STACK=llm-qwen-stack        # one name per stack, e.g. llm-qwen-p5 for a second one
 # The template is about 62 KB, over the 51,200-byte limit for --template-body, so stage it in S3 first.
 BUCKET=cfn-templates-$(aws sts get-caller-identity --query Account --output text)-us-east-1
 aws s3api head-bucket --bucket $BUCKET 2>/dev/null || aws s3 mb s3://$BUCKET --region us-east-1
@@ -882,7 +882,7 @@ Every problem below happened during the PoC between 8 and 19 October 2026. Each 
 Cancel the capacity reservation, delete the stack, then remove the DNS record. The stack deletes cleanly with no manual emptying.
 
 ```bash
-STACK=freyr-llm-qwen-stack
+STACK=llm-qwen-stack
 aws ec2 describe-capacity-reservations --region us-east-1 --filters Name=state,Values=active \
   --query 'CapacityReservations[].[CapacityReservationId,InstanceType,AvailabilityZone]' --output table
 aws ec2 cancel-capacity-reservation --region us-east-1 --capacity-reservation-id <cr-...>
@@ -1327,7 +1327,7 @@ This section lists everything in `cloudformation/llm-qwen-gpu-bifrost.yaml`: all
 
 | Parameter | Default | Allowed | What it does | Replaces the GPU instance? |
 | --- | --- | --- | --- | --- |
-| `ProjectName` | `freyr-llm-qwen` |  | Prefix for every resource name, log group and alarm. Unique per stack in the account | Yes |
+| `ProjectName` | `llm-qwen` |  | Prefix for every resource name, log group and alarm. Unique per stack in the account | Yes |
 | `GpuAvailabilityZone` | `us-east-1a` |  | Zone of the first public and private subnets. Must offer the instance type | Yes, if the host is in private-a |
 | `SecondAvailabilityZone` | `us-east-1b` |  | Zone of the second public and private subnets; the ALB needs two zones | Yes, if the host is in private-b |
 | `VpcCidr` | `10.20.0.0/16` |  | Address range of the new VPC. Change it only if it overlaps a network you will connect to | Yes (whole network) |
@@ -1382,7 +1382,7 @@ This section lists everything in `cloudformation/llm-qwen-gpu-bifrost.yaml`: all
 | Parameter | Default | Allowed | What it does | Replaces the GPU instance? |
 | --- | --- | --- | --- | --- |
 | `BifrostImage` | `maximhq/bifrost:v2.2.1` |  | Pinned Bifrost container image | Yes |
-| `BifrostAdminUser` | `freyr-admin` |  | Bifrost dashboard and admin API user name; the password is generated | Yes |
+| `BifrostAdminUser` | `llm-admin` |  | Bifrost dashboard and admin API user name; the password is generated | Yes |
 | `AllowModelStagingWrite` | `true` | true, false | Lets the instance upload the first copy of the weights to S3. Set false afterwards | No |
 | `AdminPrincipalArn` | `(empty)` |  | Optional IAM role pattern that may read model objects from outside the VPC endpoint | No |
 | `AlarmEmail` | `(empty)` |  | Email for alarm notifications (confirm the subscription) | No |

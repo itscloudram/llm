@@ -76,7 +76,7 @@ while true; do
         --instance-type "$TYPE" --instance-platform "Linux/UNIX" \
         --availability-zone "$az" --tenancy default --instance-count 1 \
         --instance-match-criteria open --end-date-type unlimited \
-        --tag-specifications "ResourceType=capacity-reservation,Tags=[{Key=Name,Value=freyr-llm-qwen}]" \
+        --tag-specifications "ResourceType=capacity-reservation,Tags=[{Key=Name,Value=llm-qwen}]" \
         --query 'CapacityReservation.CapacityReservationId' --output text 2>&1); then
       state=$(wait_state "$out")
       if [ "$state" = failed ]; then

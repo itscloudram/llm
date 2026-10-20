@@ -1,7 +1,7 @@
 [
  {
   "ParameterKey": "ProjectName",
-  "ParameterValue": "freyr-llm-qwen"
+  "ParameterValue": "llm-qwen"
  },
  {
   "ParameterKey": "GpuAvailabilityZone",
@@ -137,7 +137,7 @@
  },
  {
   "ParameterKey": "BifrostAdminUser",
-  "ParameterValue": "freyr-admin"
+  "ParameterValue": "llm-admin"
  },
  {
   "ParameterKey": "AllowModelStagingWrite",
